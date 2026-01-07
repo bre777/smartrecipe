@@ -1,0 +1,124 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <title>SmartRecipe - Create</title>
+</head>
+<body>
+  <h1>Create Recipe</h1>
+
+  <form id="f">
+    <p><input id="title" placeholder="Title" required></p>
+    <p><textarea id="ingredients" placeholder="Ingredients" required></textarea></p>
+    <p><textarea id="instructions" placeholder="Instructions" required></textarea></p>
+    <p><input id="image" type="file" accept="image/*" required></p>
+    <button type="submit">Upload + Create</button>
+  </form>
+
+  <pre id="out">Waiting…</pre>
+
+  <h2>My Recipes</h2>
+  <button id="load" type="button">Load recipes</button>
+  <div id="recipes"></div>
+
+<script>
+const out = document.getElementById("out");
+const recipesDiv = document.getElementById("recipes");
+
+const API_BASE = "https://smartrecipe-api-c2h0f5gdgcbgc3cx.uksouth-01.azurewebsites.net/api";
+
+function show(x){ out.textContent = typeof x === "string" ? x : JSON.stringify(x,null,2); }
+
+document.getElementById("load").addEventListener("click", loadRecipes);
+
+document.getElementById("f").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  show("Working...");
+
+  const file = document.getElementById("image").files[0];
+  const title = document.getElementById("title").value.trim();
+  const ingredients = document.getElementById("ingredients").value.trim();
+  const instructions = document.getElementById("instructions").value.trim();
+
+  if (!file) return show("Pick an image first.");
+
+  // 1) get SAS URL
+  const sasResp = await fetch(`${API_BASE}/upload-url`, {
+    method: "POST",
+    headers: {"Content-Type":"application/json"},
+    body: JSON.stringify({ fileName: file.name, contentType: file.type || "application/octet-stream" })
+  });
+
+  const sasText = await sasResp.text();
+  let sasBody; try { sasBody = JSON.parse(sasText); } catch { sasBody = sasText; }
+
+  if(!sasResp.ok) return show({error:"upload-url failed", status:sasResp.status, body:sasBody});
+
+  // 2) upload to blob
+  const putResp = await fetch(sasBody.uploadUrl, {
+    method: "PUT",
+    headers: {
+      "x-ms-blob-type": "BlockBlob",
+      "Content-Type": file.type || "application/octet-stream"
+    },
+    body: file
+  });
+
+  if(!putResp.ok) return show({error:"blob upload failed", status:putResp.status, body: await putResp.text()});
+
+  // 3) create recipe
+  const createResp = await fetch(`${API_BASE}/recipeService`, {
+    method: "POST",
+    headers: {"Content-Type":"application/json"},
+    body: JSON.stringify({
+      authorId: "demo-user2",
+      title, ingredients, instructions,
+      imageUrl: sasBody.blobUrl
+    })
+  });
+
+  const createText = await createResp.text();
+  let createBody; try { createBody = JSON.parse(createText); } catch { createBody = createText; }
+
+  if(!createResp.ok) return show({error:"create failed", status:createResp.status, body:createBody});
+
+  show({success:true, recipe:createBody});
+  await loadRecipes(); // auto refresh list
+});
+
+async function loadRecipes() {
+  recipesDiv.textContent = "Loading...";
+
+  const resp = await fetch(`${API_BASE}/recipeService?authorId=demo-user`);
+  if (!resp.ok) {
+    recipesDiv.textContent = `Failed to load recipes (${resp.status})`;
+    return;
+  }
+
+  const recipes = await resp.json();
+  if (!recipes.length) {
+    recipesDiv.textContent = "No recipes yet.";
+    return;
+  }
+
+  recipesDiv.innerHTML = "";
+
+  for (const r of recipes) {
+    const div = document.createElement("div");
+    div.style.border = "1px solid #ccc";
+    div.style.padding = "10px";
+    div.style.margin = "10px 0";
+
+    div.innerHTML = `
+      <h3>${r.title}</h3>
+      <p><strong>Ingredients:</strong><br>${r.ingredients}</p>
+      <p><strong>Instructions:</strong><br>${r.instructions}</p>
+      ${r.imageUrl ? `<img src="${r.imageUrl}" style="max-width:300px">` : ""}
+    `;
+
+    recipesDiv.appendChild(div);
+  }
+}
+</script>
+</body>
+</html>
