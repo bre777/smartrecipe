@@ -1,0 +1,81 @@
+<!doctype html>
+<html>
+<head><meta charset="utf-8"><title>Edit Recipe</title></head>
+<body>
+  <nav>
+    <a href="/index.html">Home</a> |
+    <a href="/view.html">View recipes</a> |
+    <a href="/create.html">Post recipe</a> |
+    <a href="/edit.html">Edit recipe</a> |
+    <a href="/delete.html">Delete recipe</a>
+  </nav>
+
+  <h1>Edit Recipe</h1>
+
+  <p>Step 1: Load a recipe by ID</p>
+  <input id="id" placeholder="Recipe id" />
+  <button id="load" type="button">Load</button>
+
+  <hr>
+
+  <form id="f">
+    <p><input id="title" placeholder="Title" required></p>
+    <p><textarea id="ingredients" placeholder="Ingredients" required></textarea></p>
+    <p><textarea id="instructions" placeholder="Instructions" required></textarea></p>
+    <button type="submit">Save changes</button>
+  </form>
+
+  <pre id="out">Waiting…</pre>
+
+  <script src="/config.js"></script>
+  <script>
+    const out = document.getElementById("out");
+    const show = (x) => out.textContent = typeof x === "string" ? x : JSON.stringify(x, null, 2);
+
+    document.getElementById("load").addEventListener("click", loadOne);
+    document.getElementById("f").addEventListener("submit", save);
+
+    async function loadOne() {
+      const id = document.getElementById("id").value.trim();
+      if (!id) return show("Enter an id.");
+
+      const url = `${window.API_BASE}/recipeService/${encodeURIComponent(id)}?authorId=${encodeURIComponent(window.AUTHOR_ID)}`;
+      const resp = await fetch(url);
+      const text = await resp.text();
+      let body; try { body = JSON.parse(text); } catch { body = text; }
+      if (!resp.ok) return show({ error: "load failed", status: resp.status, body });
+
+      document.getElementById("title").value = body.title || "";
+      document.getElementById("ingredients").value = body.ingredients || "";
+      document.getElementById("instructions").value = body.instructions || "";
+      show(body);
+    }
+
+    async function save(e) {
+      e.preventDefault();
+      const id = document.getElementById("id").value.trim();
+      if (!id) return show("Enter an id.");
+
+      const payload = {
+        authorId: window.AUTHOR_ID,
+        title: document.getElementById("title").value.trim(),
+        ingredients: document.getElementById("ingredients").value.trim(),
+        instructions: document.getElementById("instructions").value.trim()
+      };
+
+      const url = `${window.API_BASE}/recipeService/${encodeURIComponent(id)}?authorId=${encodeURIComponent(window.AUTHOR_ID)}`;
+      const resp = await fetch(url, {
+        method: "PUT",
+        headers: {"Content-Type":"application/json"},
+        body: JSON.stringify(payload)
+      });
+
+      const text = await resp.text();
+      let body; try { body = JSON.parse(text); } catch { body = text; }
+
+      if (!resp.ok) return show({ error: "update failed", status: resp.status, body });
+      show({ success: true, updated: body });
+    }
+  </script>
+</body>
+</html>
