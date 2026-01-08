@@ -1,80 +1,176 @@
 <!doctype html>
 <html>
-<head><meta charset="utf-8"><title>Post Recipe</title></head>
+<head>
+  <meta charset="utf-8">
+  <title>Post Recipe</title>
+  <link rel="stylesheet" href="/styles.css">
+</head>
 <body>
-  <nav>
-    <a href="/index.html">Home</a> |
-    <a href="/view.html">View recipes</a> |
-    <a href="/create.html">Post recipe</a> |
-    <a href="/edit.html">Edit recipe</a> |
-    <a href="/delete.html">Delete recipe</a>
-  </nav>
+  <div class="container">
+    <nav>
+      <a href="/index.html">Home</a> |
+      <a href="/view.html">View recipes</a> |
+      <a href="/create.html">Post recipe</a> |
+      <a href="/edit.html">Edit recipe</a> |
+      <a href="/delete.html">Delete recipe</a>
+    </nav>
 
-  <h1>Post Recipe</h1>
+    <h1>Post Recipe</h1>
 
-  <form id="f">
-    <p><input id="title" placeholder="Title" required></p>
-    <p><textarea id="ingredients" placeholder="Ingredients" required></textarea></p>
-    <p><textarea id="instructions" placeholder="Instructions" required></textarea></p>
-    <p><input id="image" type="file" accept="image/*" required></p>
-    <button type="submit">Upload image + Create recipe</button>
-  </form>
+    <form id="f">
+      <p><input id="title" placeholder="Title" required></p>
+      <p><textarea id="ingredients" placeholder="Ingredients" required></textarea></p>
+      <p><textarea id="instructions" placeholder="Instructions" required></textarea></p>
 
-  <pre id="out">Waiting…</pre>
+      <h3>Food photo (saved with recipe)</h3>
+      <p><input id="foodImage" type="file" accept="image/*" required></p>
+      <p><img id="foodPreview" class="preview" alt="Food preview"></p>
 
-  <script src="/config.js"></script>
-  <script>
-    const out = document.getElementById("out");
-    const show = (x) => out.textContent = typeof x === "string" ? x : JSON.stringify(x, null, 2);
+      <h3>Handwritten/printed recipe photo (OCR helper)</h3>
+      <p><input id="ocrImage" type="file" accept="image/*"></p>
+      <p><img id="ocrPreview" class="preview" alt="OCR preview"></p>
 
-    document.getElementById("f").addEventListener("submit", async (e) => {
-      e.preventDefault();
-      show("Working...");
+      <div class="actions">
+        <button id="ocrBtn" type="button">Extract text from OCR image</button>
+        <button id="pasteOcrToInstructions" type="button">Paste OCR into instructions</button>
+      </div>
 
-      const file = document.getElementById("image").files[0];
-      if (!file) return show("Pick an image.");
+      <p><textarea id="ocrText" class="tall" placeholder="OCR output will appear here..."></textarea></p>
 
-      const title = document.getElementById("title").value.trim();
-      const ingredients = document.getElementById("ingredients").value.trim();
-      const instructions = document.getElementById("instructions").value.trim();
+      <button type="submit">Upload food image + Create recipe</button>
+    </form>
 
-      // 1) get SAS URL
-      const sasResp = await fetch(`${window.API_BASE}/upload-url`, {
-        method: "POST",
-        headers: {"Content-Type":"application/json"},
-        body: JSON.stringify({ fileName: file.name, contentType: file.type || "application/octet-stream" })
+    <pre id="out">Waiting…</pre>
+
+    <script src="/config.js"></script>
+    <script>
+      const out = document.getElementById("out");
+      const show = (x) => out.textContent = typeof x === "string" ? x : JSON.stringify(x, null, 2);
+
+      const foodPreview = document.getElementById("foodPreview");
+      const ocrPreview  = document.getElementById("ocrPreview");
+
+      const UPLOAD_ENDPOINT = `${window.API_BASE}/upload-url`;
+      const OCR_ENDPOINT    = `${window.API_BASE}/ocrService`;
+
+      let currentOcrImageUrl = null;
+
+      function setPreview(imgEl, file) {
+        if (!file) { imgEl.style.display = "none"; return; }
+        imgEl.src = URL.createObjectURL(file);
+        imgEl.style.display = "block";
+      }
+
+      async function getSas(file) {
+        const resp = await fetch(UPLOAD_ENDPOINT, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ fileName: file.name, contentType: file.type || "application/octet-stream" })
+        });
+        const text = await resp.text();
+        let body; try { body = JSON.parse(text); } catch { body = text; }
+        if (!resp.ok) throw new Error(`upload-url failed (${resp.status}): ${text}`);
+        return body;
+      }
+
+      async function putBlob(uploadUrl, file) {
+        const resp = await fetch(uploadUrl, {
+          method: "PUT",
+          headers: {
+            "x-ms-blob-type": "BlockBlob",
+            "Content-Type": file.type || "application/octet-stream"
+          },
+          body: file
+        });
+        if (!resp.ok) throw new Error(`blob upload failed (${resp.status}): ${await resp.text()}`);
+      }
+
+      document.getElementById("foodImage").addEventListener("change", () => {
+        setPreview(foodPreview, document.getElementById("foodImage").files[0]);
       });
-      const sasText = await sasResp.text();
-      let sasBody; try { sasBody = JSON.parse(sasText); } catch { sasBody = sasText; }
-      if (!sasResp.ok) return show({ error: "upload-url failed", status: sasResp.status, body: sasBody });
 
-      // 2) upload to blob
-      const putResp = await fetch(sasBody.uploadUrl, {
-        method: "PUT",
-        headers: {
-          "x-ms-blob-type": "BlockBlob",
-          "Content-Type": file.type || "application/octet-stream"
-        },
-        body: file
+      document.getElementById("ocrImage").addEventListener("change", () => {
+        currentOcrImageUrl = null;
+        setPreview(ocrPreview, document.getElementById("ocrImage").files[0]);
       });
-      if (!putResp.ok) return show({ error: "blob upload failed", status: putResp.status, body: await putResp.text() });
 
-      // 3) create recipe
-      const createResp = await fetch(`${window.API_BASE}/recipeService`, {
-        method: "POST",
-        headers: {"Content-Type":"application/json"},
-        body: JSON.stringify({
-          authorId: window.AUTHOR_ID,
-          title, ingredients, instructions,
-          imageUrl: sasBody.blobUrl
-        })
+      document.getElementById("pasteOcrToInstructions").addEventListener("click", () => {
+        const t = document.getElementById("ocrText").value.trim();
+        if (!t) return show("No OCR text to paste.");
+        document.getElementById("instructions").value = t;
+        show("Pasted OCR text into instructions.");
       });
-      const createText = await createResp.text();
-      let createBody; try { createBody = JSON.parse(createText); } catch { createBody = createText; }
-      if (!createResp.ok) return show({ error: "create failed", status: createResp.status, body: createBody });
 
-      show({ success: true, recipe: createBody });
-    });
-  </script>
+      document.getElementById("ocrBtn").addEventListener("click", async () => {
+        const file = document.getElementById("ocrImage").files[0];
+        if (!file) return show("Pick an OCR image first.");
+
+        try {
+          if (!currentOcrImageUrl) {
+            show("Uploading OCR image...");
+            const sas = await getSas(file);
+            await putBlob(sas.uploadUrl, file);
+            currentOcrImageUrl = sas.blobUrl;
+          }
+
+          show({ step: "ocr", imageUrl: currentOcrImageUrl });
+
+          const resp = await fetch(OCR_ENDPOINT, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ imageUrl: currentOcrImageUrl })
+          });
+
+          const text = await resp.text();
+          let body; try { body = JSON.parse(text); } catch { body = text; }
+          if (!resp.ok) return show({ error: "ocr failed", status: resp.status, body });
+
+          document.getElementById("ocrText").value = body.text || "";
+          show({ success: true, ocrLines: body.lines?.length ?? 0 });
+        } catch (err) {
+          show({ error: "ocr flow failed", message: String(err) });
+        }
+      });
+
+      document.getElementById("f").addEventListener("submit", async (e) => {
+        e.preventDefault();
+        show("Working...");
+
+        const foodFile = document.getElementById("foodImage").files[0];
+        if (!foodFile) return show("Pick a food photo.");
+
+        const title = document.getElementById("title").value.trim();
+        const ingredients = document.getElementById("ingredients").value.trim();
+        const instructions = document.getElementById("instructions").value.trim();
+
+        try {
+          const sas = await getSas(foodFile);
+          await putBlob(sas.uploadUrl, foodFile);
+
+          const resp = await fetch(`${window.API_BASE}/recipeService`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              authorId: window.AUTHOR_ID,
+              title, ingredients, instructions,
+              imageUrl: sas.blobUrl
+            })
+          });
+
+          const text = await resp.text();
+          let body; try { body = JSON.parse(text); } catch { body = text; }
+          if (!resp.ok) return show({ error: "create failed", status: resp.status, body });
+
+          show({ success: true, recipe: body });
+          document.getElementById("f").reset();
+          foodPreview.style.display = "none";
+          ocrPreview.style.display = "none";
+          currentOcrImageUrl = null;
+        } catch (err) {
+          show({ error: "create flow failed", message: String(err) });
+        }
+      });
+    </script>
+  </div>
 </body>
 </html>

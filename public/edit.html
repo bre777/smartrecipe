@@ -1,81 +1,254 @@
 <!doctype html>
 <html>
-<head><meta charset="utf-8"><title>Edit Recipe</title></head>
+<head>
+  <meta charset="utf-8">
+  <title>Edit Recipe</title>
+  <link rel="stylesheet" href="/styles.css">
+</head>
+
 <body>
-  <nav>
-    <a href="/index.html">Home</a> |
-    <a href="/view.html">View recipes</a> |
-    <a href="/create.html">Post recipe</a> |
-    <a href="/edit.html">Edit recipe</a> |
-    <a href="/delete.html">Delete recipe</a>
-  </nav>
+  <div class="container">
+    <nav>
+      <a href="/index.html">Home</a> |
+      <a href="/view.html">View recipes</a> |
+      <a href="/create.html">Post recipe</a> |
+      <a href="/edit.html">Edit recipe</a> |
+      <a href="/delete.html">Delete recipe</a>
+    </nav>
 
-  <h1>Edit Recipe</h1>
+    <h1>Edit Recipe</h1>
 
-  <p>Step 1: Load a recipe by ID</p>
-  <input id="id" placeholder="Recipe id" />
-  <button id="load" type="button">Load</button>
+    <p>Step 1: Load a recipe by ID</p>
+    <p><input id="id" placeholder="Recipe id" /></p>
 
-  <hr>
+    <div class="actions">
+      <button id="load" type="button">Load</button>
+    </div>
 
-  <form id="f">
-    <p><input id="title" placeholder="Title" required></p>
-    <p><textarea id="ingredients" placeholder="Ingredients" required></textarea></p>
-    <p><textarea id="instructions" placeholder="Instructions" required></textarea></p>
-    <button type="submit">Save changes</button>
-  </form>
+    <hr>
 
-  <pre id="out">Waiting…</pre>
+    <form id="f">
+      <p><input id="title" placeholder="Title" required></p>
 
-  <script src="/config.js"></script>
-  <script>
-    const out = document.getElementById("out");
-    const show = (x) => out.textContent = typeof x === "string" ? x : JSON.stringify(x, null, 2);
+      <h3>Food photo (saved with recipe)</h3>
+      <p><label>Replace food image (optional)</label></p>
+      <p><input id="imageFile" type="file" accept="image/*"></p>
+      <p><img id="preview" class="preview" alt="Food image preview"></p>
 
-    document.getElementById("load").addEventListener("click", loadOne);
-    document.getElementById("f").addEventListener("submit", save);
+      <h3>OCR helper (handwritten/printed recipe photo)</h3>
+      <p><input id="ocrImage" type="file" accept="image/*"></p>
+      <p><img id="ocrPreview" class="preview" alt="OCR image preview"></p>
 
-    async function loadOne() {
-      const id = document.getElementById("id").value.trim();
-      if (!id) return show("Enter an id.");
+      <div class="actions">
+        <button id="ocrBtn" type="button">Extract text from OCR image</button>
+        <button id="pasteOcrToIngredients" type="button">Paste OCR into ingredients</button>
+        <button id="pasteOcrToInstructions" type="button">Paste OCR into instructions</button>
+      </div>
 
-      const url = `${window.API_BASE}/recipeService/${encodeURIComponent(id)}?authorId=${encodeURIComponent(window.AUTHOR_ID)}`;
-      const resp = await fetch(url);
-      const text = await resp.text();
-      let body; try { body = JSON.parse(text); } catch { body = text; }
-      if (!resp.ok) return show({ error: "load failed", status: resp.status, body });
+      <p>
+        <textarea id="ocrText" class="tall" placeholder="OCR output will appear here..."></textarea>
+      </p>
 
-      document.getElementById("title").value = body.title || "";
-      document.getElementById("ingredients").value = body.ingredients || "";
-      document.getElementById("instructions").value = body.instructions || "";
-      show(body);
-    }
+      <p><textarea id="ingredients" placeholder="Ingredients" required></textarea></p>
+      <p><textarea id="instructions" placeholder="Instructions" required></textarea></p>
 
-    async function save(e) {
-      e.preventDefault();
-      const id = document.getElementById("id").value.trim();
-      if (!id) return show("Enter an id.");
+      <div class="actions">
+        <button type="submit">Save changes</button>
+      </div>
+    </form>
 
-      const payload = {
-        authorId: window.AUTHOR_ID,
-        title: document.getElementById("title").value.trim(),
-        ingredients: document.getElementById("ingredients").value.trim(),
-        instructions: document.getElementById("instructions").value.trim()
-      };
+    <pre id="out">Waiting…</pre>
 
-      const url = `${window.API_BASE}/recipeService/${encodeURIComponent(id)}?authorId=${encodeURIComponent(window.AUTHOR_ID)}`;
-      const resp = await fetch(url, {
-        method: "PUT",
-        headers: {"Content-Type":"application/json"},
-        body: JSON.stringify(payload)
+    <script src="/config.js"></script>
+    <script>
+      const out = document.getElementById("out");
+      const show = (x) => out.textContent = typeof x === "string" ? x : JSON.stringify(x, null, 2);
+
+      const preview = document.getElementById("preview");
+      const imageFileInput = document.getElementById("imageFile");
+
+      const ocrPreview = document.getElementById("ocrPreview");
+      const ocrFileInput = document.getElementById("ocrImage");
+
+      const UPLOAD_ENDPOINT = `${window.API_BASE}/upload-url`;
+      const OCR_ENDPOINT = `${window.API_BASE}/ocrService`;
+
+      let currentImageUrl = null;      // current recipe food imageUrl
+      let currentOcrImageUrl = null;   // uploaded OCR helper blobUrl
+
+      function getUrl(id) {
+        return `${window.API_BASE}/recipeService?id=${encodeURIComponent(id)}`;
+      }
+
+      function setPreview(imgEl, url) {
+        if (!url) { imgEl.style.display = "none"; return; }
+        imgEl.src = url;
+        imgEl.style.display = "block";
+      }
+
+      function setLocalPreview(imgEl, file) {
+        if (!file) { imgEl.style.display = "none"; return; }
+        imgEl.src = URL.createObjectURL(file);
+        imgEl.style.display = "block";
+      }
+
+      async function getSas(file) {
+        const resp = await fetch(UPLOAD_ENDPOINT, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ fileName: file.name, contentType: file.type || "application/octet-stream" })
+        });
+        const text = await resp.text();
+        let body; try { body = JSON.parse(text); } catch { body = text; }
+        if (!resp.ok) throw new Error(`upload-url failed (${resp.status}): ${text}`);
+        return body; // { uploadUrl, blobUrl, ... }
+      }
+
+      async function putBlob(uploadUrl, file) {
+        const resp = await fetch(uploadUrl, {
+          method: "PUT",
+          headers: {
+            "x-ms-blob-type": "BlockBlob",
+            "Content-Type": file.type || "application/octet-stream"
+          },
+          body: file
+        });
+        if (!resp.ok) throw new Error(`blob upload failed (${resp.status}): ${await resp.text()}`);
+      }
+
+      // --- Food image preview ---
+      imageFileInput.addEventListener("change", () => {
+        const file = imageFileInput.files && imageFileInput.files[0];
+        if (!file) return setPreview(preview, currentImageUrl);
+        setLocalPreview(preview, file);
       });
 
-      const text = await resp.text();
-      let body; try { body = JSON.parse(text); } catch { body = text; }
+      // --- OCR preview ---
+      ocrFileInput.addEventListener("change", () => {
+        const file = ocrFileInput.files && ocrFileInput.files[0];
+        currentOcrImageUrl = null;
+        if (!file) { ocrPreview.style.display = "none"; return; }
+        setLocalPreview(ocrPreview, file);
+      });
 
-      if (!resp.ok) return show({ error: "update failed", status: resp.status, body });
-      show({ success: true, updated: body });
-    }
-  </script>
+      document.getElementById("pasteOcrToIngredients").addEventListener("click", () => {
+        const t = document.getElementById("ocrText").value.trim();
+        if (!t) return show("No OCR text to paste.");
+        document.getElementById("ingredients").value = t;
+        show("Pasted OCR text into ingredients.");
+      });
+
+      document.getElementById("pasteOcrToInstructions").addEventListener("click", () => {
+        const t = document.getElementById("ocrText").value.trim();
+        if (!t) return show("No OCR text to paste.");
+        document.getElementById("instructions").value = t;
+        show("Pasted OCR text into instructions.");
+      });
+
+      // --- Load recipe ---
+      document.getElementById("load").addEventListener("click", async () => {
+        const id = document.getElementById("id").value.trim();
+        if (!id) return show("Enter an id.");
+
+        const url = getUrl(id);
+        const resp = await fetch(url);
+        const text = await resp.text();
+        let body; try { body = JSON.parse(text); } catch { body = text; }
+        if (!resp.ok) return show({ error: "load failed", status: resp.status, body, url });
+
+        document.getElementById("title").value = body.title || "";
+        document.getElementById("ingredients").value = body.ingredients || "";
+        document.getElementById("instructions").value = body.instructions || "";
+
+        currentImageUrl = body.imageUrl || null;
+        setPreview(preview, currentImageUrl);
+
+        imageFileInput.value = "";
+        ocrFileInput.value = "";
+        document.getElementById("ocrText").value = "";
+        currentOcrImageUrl = null;
+        ocrPreview.style.display = "none";
+
+        show(body);
+      });
+
+      // --- OCR ---
+      document.getElementById("ocrBtn").addEventListener("click", async () => {
+        const file = ocrFileInput.files && ocrFileInput.files[0];
+        if (!file) return show("Pick an OCR image first.");
+
+        try {
+          if (!currentOcrImageUrl) {
+            show("Uploading OCR image...");
+            const sas = await getSas(file);
+            await putBlob(sas.uploadUrl, file);
+            currentOcrImageUrl = sas.blobUrl;
+          }
+
+          const resp = await fetch(OCR_ENDPOINT, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ imageUrl: currentOcrImageUrl })
+          });
+
+          const text = await resp.text();
+          let body; try { body = JSON.parse(text); } catch { body = text; }
+          if (!resp.ok) return show({ error: "ocr failed", status: resp.status, body });
+
+          document.getElementById("ocrText").value = body.text || "";
+          show({ success: true, ocrLines: body.lines?.length ?? 0 });
+        } catch (err) {
+          show({ error: "ocr flow failed", message: String(err) });
+        }
+      });
+
+      // --- Save recipe changes ---
+      document.getElementById("f").addEventListener("submit", async (e) => {
+        e.preventDefault();
+
+        const id = document.getElementById("id").value.trim();
+        if (!id) return show("Enter an id.");
+
+        const file = imageFileInput.files && imageFileInput.files[0];
+        let imageUrlToSave = currentImageUrl;
+
+        try {
+          if (file) {
+            show({ step: "uploading food image...", fileName: file.name, type: file.type });
+            const { uploadUrl, blobUrl } = await getSas(file);
+            await putBlob(uploadUrl, file);
+            imageUrlToSave = blobUrl;
+          }
+
+          const payload = {
+            id,
+            title: document.getElementById("title").value.trim(),
+            ingredients: document.getElementById("ingredients").value.trim(),
+            instructions: document.getElementById("instructions").value.trim(),
+            imageUrl: imageUrlToSave
+          };
+
+          const url = getUrl(id);
+          const resp = await fetch(url, {
+            method: "PUT",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(payload)
+          });
+
+          const text = await resp.text();
+          let body; try { body = JSON.parse(text); } catch { body = text; }
+          if (!resp.ok) return show({ error: "update failed", status: resp.status, body, url, payload });
+
+          currentImageUrl = body.imageUrl || imageUrlToSave || null;
+          setPreview(preview, currentImageUrl);
+          imageFileInput.value = "";
+
+          show({ success: true, updated: body });
+        } catch (err) {
+          show({ error: "save failed", message: String(err) });
+        }
+      });
+    </script>
+  </div>
 </body>
 </html>

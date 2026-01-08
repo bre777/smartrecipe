@@ -1,56 +1,79 @@
 <!doctype html>
 <html>
-<head><meta charset="utf-8"><title>View Recipes</title></head>
+<head>
+  <meta charset="utf-8">
+  <title>View Recipes</title>
+  <link rel="stylesheet" href="/styles.css">
+</head>
 <body>
-  <nav>
-    <a href="/index.html">Home</a> |
-    <a href="/view.html">View recipes</a> |
-    <a href="/create.html">Post recipe</a> |
-    <a href="/edit.html">Edit recipe</a> |
-    <a href="/delete.html">Delete recipe</a>
-  </nav>
+  <div class="container">
+    <nav>
+      <a href="/index.html">Home</a> |
+      <a href="/view.html">View recipes</a> |
+      <a href="/create.html">Post recipe</a> |
+      <a href="/edit.html">Edit recipe</a> |
+      <a href="/delete.html">Delete recipe</a>
+    </nav>
 
-  <h1>View Recipes</h1>
+    <h1>View Recipes</h1>
 
-  <button id="load" type="button">Load my recipes</button>
-  <div id="out"></div>
+    <div class="actions">
+      <button id="load" type="button">Load recipes</button>
+    </div>
 
-  <script src="/config.js"></script>
-  <script>
-    const out = document.getElementById("out");
+    <div id="out"></div>
 
-    document.getElementById("load").addEventListener("click", load);
+    <script src="/config.js"></script>
+    <script>
+      const out = document.getElementById("out");
+      document.getElementById("load").addEventListener("click", load);
 
-    async function load() {
-      out.textContent = "Loading...";
-      const url = `${window.API_BASE}/recipeService?authorId=${encodeURIComponent(window.AUTHOR_ID)}`;
-      const resp = await fetch(url);
-      if (!resp.ok) { out.textContent = `Failed (${resp.status})`; return; }
-
-      const recipes = await resp.json();
-      if (!recipes.length) { out.textContent = "No recipes yet."; return; }
-
-      out.innerHTML = "";
-      for (const r of recipes) {
-        const div = document.createElement("div");
-        div.innerHTML = `
-          <hr>
-          <h3>${escapeHtml(r.title)}</h3>
-          <p><b>id:</b> ${escapeHtml(r.id)}</p>
-          <p><b>ingredients:</b><br>${escapeHtml(r.ingredients)}</p>
-          <p><b>instructions:</b><br>${escapeHtml(r.instructions)}</p>
-          ${r.imageUrl ? `<p><img src="${r.imageUrl}" width="250"></p>` : ""}
-        `;
-        out.appendChild(div);
+      function el(tag, props = {}, ...children) {
+        const node = document.createElement(tag);
+        for (const [k, v] of Object.entries(props)) {
+          if (k === "text") node.textContent = v;
+          else if (k === "class") node.className = v;
+          else if (k.startsWith("on") && typeof v === "function") node.addEventListener(k.slice(2), v);
+          else node.setAttribute(k, v);
+        }
+        for (const c of children) node.appendChild(typeof c === "string" ? document.createTextNode(c) : c);
+        return node;
       }
-    }
 
-    function escapeHtml(s) {
-      return String(s ?? "")
-        .replaceAll("&","&amp;").replaceAll("<","&lt;")
-        .replaceAll(">","&gt;").replaceAll('"',"&quot;")
-        .replaceAll("'","&#039;");
-    }
-  </script>
+      function showMsg(msg) { out.textContent = msg; }
+
+      async function load() {
+        showMsg("Loading...");
+        const url = `${window.API_BASE}/recipeService`;
+
+        let resp;
+        try { resp = await fetch(url); }
+        catch (e) { return showMsg(`Network error: ${e}`); }
+
+        if (!resp.ok) return showMsg(`Failed (${resp.status})`);
+
+        const recipes = await resp.json();
+        if (!recipes.length) return showMsg("No recipes yet.");
+
+        out.innerHTML = "";
+        for (const r of recipes) {
+          const card = el("div", { class: "card" },
+            el("h3", { text: r.title || "(untitled)" }),
+            el("p", {}, el("b", { text: "id: " }), el("span", { text: String(r.id || "") })),
+            el("p", {}, el("b", { text: "ingredients:" })),
+            el("pre", { text: r.ingredients || "" }),
+            el("p", {}, el("b", { text: "instructions:" })),
+            el("pre", { text: r.instructions || "" })
+          );
+
+          if (r.imageUrl) {
+            card.appendChild(el("p", {}, el("img", { src: r.imageUrl, alt: "recipe image" })));
+          }
+
+          out.appendChild(card);
+        }
+      }
+    </script>
+  </div>
 </body>
 </html>
